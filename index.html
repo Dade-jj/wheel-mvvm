@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>事件与代码优化</title>
+</head>
+<body>
+
+<div id="app" >
+  <input v-model="name" v-on:click="sayHi" type="text">
+  <h1>{{name}} 's age is {{age}}</h1>
+</div>
+
+<script>
+
+function observe(data) {
+	if(!data || typeof data !== 'object') return
+	for(let key in data) {
+		let val = data[key]
+		let subject = new Subject()
+		Object.defineProperty(data, key, {
+			enumerable: true,
+			configurable: true,
+			get: function() {
+				if(currentObserver) {
+					console.log('notify')
+					currentObserver.subscribeTo(subject)
+				}
+				return val
+			},
+			set: function(newVal) {
+				val = newVal
+				subject.notify()
+			}
+		})
+		if (typeof val === 'object') {
+			observe(val)
+		}
+	}
+}
+
+let id = 0
+let currentObserver
+
+class Subject {
+	constructor() {
+		this.id = id++
+		this.observers = []
+	}
+	addObserver(observer) {
+		this.observers.push(observer)
+	}
+	removeObserver(observer) {
+		 let index = this.observers.indexOf(observer)
+		 if(index > -1) {
+		 	this.observers.splice(index, 1)
+		 }
+	}
+	notify() {
+		this.observers.forEach(observer => {
+			observer.update()
+		})
+	}
+}
+
+class Observer {
+	constructor(vm, key, cb) {
+		this.subjects = {}
+		this.vm = vm
+		this.key = key
+		this.cb = cb
+		this.value = this.getValue()
+	}
+	update() {
+		let oldVal = this.value
+		let value = this.getValue()
+		if(value !== oldVal){
+			this.value = value
+			this.cb.bind(this.vm)(value, oldVal)
+		}
+	}
+	subscribeTo(subject) {
+		if(!this.subjects[subject.id]) {
+			subject.addObserver(this)
+			this.subjects[subject.id] = subject
+		}
+	}
+	getValue() {
+		currentObserver = this
+		let value = this.vm[this.key]
+		currentObserver = null
+		return value
+	}
+}
+
+class mvvm {
+	constructor(opts) {
+		this.init(opts)
+		observe(this.data)
+		new Compile(this)
+	}
+	init(opts) {
+		this.el = document.querySelector(opts.el)
+		this.data = opts.data || {}
+		this.methods = opts.methods || {}
+
+		for (let key in this.data) {
+			Object.defineProperty(this, key, {
+				enumerable: true,
+				configurable: true,
+				get: () => {
+					return this.data[key]
+				},
+				set: newVal => {
+					this.data[key] = newVal
+				}
+			})
+		}	
+		for(let key in this.methods) {
+			this.methods[key] = this.methods[key].bind(this)
+		}
+	}
+}
+
+class Compile {
+	constructor(vm) {
+		this.vm = vm
+		this.node = vm.el
+		this.compile()
+	}
+	compile() {
+		this.traverse(this.node)
+	}
+	traverse(node) {
+		if(node.nodeType === 1) {
+			this.compileNode(node)
+			node.childNodes.forEach(child => {
+				this.traverse(child)
+			})
+		}else if(node.nodeType === 3) {
+			this.compileText(node)
+		}
+	}
+	compileText(node) {
+		let reg = /{{(.+?)}}/g
+		let match
+		while(match = reg.exec(node.nodeValue)) {
+			let raw = match[0]
+			let key = match[1].trim()
+			node.nodeValue = node.nodeValue.replace(raw, this.vm[key])
+			new Observer(this.vm, key, function(newVal, oldVal) {
+				node.nodeValue = node.nodeValue.replace(oldVal, newVal)
+			})
+		}
+	}
+	compileNode(node) {
+		let attrs = [...node.attributes]
+		attrs.forEach(attr => {
+			if(this.isModelDirective(attr.name)) {
+				this.bindModel(node, attr)
+			}else if(this.isEventDirective(attr.name)) {
+				this.bindEventHandler(node, attr)
+			}
+		})
+	}
+	bindModel(node, attr){
+		let key = attr.value
+		node.value = this.vm[key]
+		new Observer(this.vm, key, function(newVal) {
+			node.value = newVal
+		})
+		node.oninput = (e) => {
+			this.vm[key] = e.target.value
+		}
+	}
+	bindEventHandler(node, attr) {
+		let event = attr.name.substr(5)
+		let methodName = attr.value
+		node.addEventListener(event, this.vm.methods[methodName])
+	}
+	isModelDirective(attrName) {
+		return attrName === 'v-model'
+	}
+	isEventDirective(attrName) {
+		return attrName.indexOf(attrName) === 0
+	}
+}
+
+let vm = new mvvm({
+	el: '#app',
+	data: {
+		name: 'jirengu',
+		age: 18
+	},
+	methods: {
+		// sayHi() {
+		// 	alert(`hi ${this.name}`)
+		// }
+	}
+})
+</script>
